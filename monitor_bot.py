@@ -32,6 +32,18 @@ log = logging.getLogger("monitorbot")
 
 DEFAULT_SETTINGS = {"watch": True, "interval_min": CHECK_MIN, "silent": False}
 
+BOTS = {
+    name: os.environ.get(key, "")
+    for name, key in {
+        "новости+погода": "BOT_TOKEN",
+        "напоминания": "REMINDER_BOT_TOKEN",
+        "скидки": "DEALS_BOT_TOKEN",
+        "деньги": "EXPENSE_BOT_TOKEN",
+        "мониторинг": "MONITOR_BOT_TOKEN",
+    }.items()
+    if os.environ.get(key, "")
+}
+
 
 def load_json(path, default):
     if path.exists():
@@ -109,7 +121,9 @@ async def cmd_help(update, context):
         "/watch — включить/выключить слежение\n"
         "/interval 15 — интервал проверки в минутах\n"
         "/silence — тихий режим\n"
-        "/history — последние тревоги",
+        "/history — последние тревоги\n"
+        "/ping — проверить все боты и задержку\n"
+        "/uptime — статистика доступности",
         parse_mode="HTML")
 
 
@@ -196,6 +210,42 @@ async def cmd_history(update, context):
     await update.message.reply_text("📜 <b>История тревог</b>\n\n" + "\n".join(lines), parse_mode="HTML")
 
 
+def ping_bot(name: str, token: str) -> tuple[str, int | None]:
+    import time
+    start = time.monotonic()
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=10)
+        r.raise_for_status()
+        return name, int((time.monotonic() - start) * 1000)
+    except Exception:
+        return name, None
+
+
+async def cmd_ping(update, context):
+    if not is_owner(update):
+        return
+    results = [await asyncio.to_thread(ping_bot, n, t) for n, t in BOTS.items()]
+    lines = [f'{"🟢" if ms is not None else "🔴"} {n}: {ms if ms is not None else "нет ответа"} мс'
+             for n, ms in results]
+    await update.message.reply_text("🏓 <b>Проверка ботов</b>\n\n" + "\n".join(lines), parse_mode="HTML")
+
+
+async def cmd_uptime(update, context):
+    if not is_owner(update):
+        return
+    state = load_json(STATE_FILE, {})
+    stats = state.get("bot_checks", {})
+    if not stats:
+        await update.message.reply_text("Статистики пока нет — подождите несколько проверок.")
+        return
+    lines = []
+    for name, data in stats.items():
+        total = data.get("ok", 0) + data.get("fail", 0)
+        if total:
+            lines.append(f"{name}: {int(data['ok'] / total * 100)}% успешных ({total} проверок)")
+    await update.message.reply_text("📈 <b>Аптайм ботов</b>\n\n" + "\n".join(lines), parse_mode="HTML")
+
+
 async def alert(context, text: str, url: str = ""):
     if settings()["silent"]:
         return
@@ -241,6 +291,20 @@ async def check(context):
                         run_url(latest))
             state["last_stale"] = datetime.now(timezone.utc).isoformat()
 
+    # Проверка живости ботов
+    bot_checks = state.setdefault("bot_checks", {})
+    for name, token in BOTS.items():
+        _, ms = await asyncio.to_thread(ping_bot, name, token)
+        entry = bot_checks.setdefault(name, {"ok": 0, "fail": 0, "streak": 0})
+        if ms is None:
+            entry["fail"] += 1
+            entry["streak"] += 1
+            if entry["streak"] == 2:
+                await alert(context, f'🔴 <b>Бот не отвечает:</b> {name}\nДве проверки подряд без ответа.')
+        else:
+            entry["ok"] += 1
+            entry["streak"] = 0
+
     state["known_runs"] = known[-200:]
     state["last_check"] = datetime.now(timezone.utc).isoformat()
     save_json(STATE_FILE, state)
@@ -252,7 +316,8 @@ def main():
         ("start", cmd_start), ("help", cmd_help), ("status", cmd_status),
         ("check", cmd_check), ("watch", cmd_watch),
         ("interval", cmd_interval), ("silence", cmd_silence),
-        ("history", cmd_history),
+        ("history", cmd_history), ("ping", cmd_ping),
+        ("uptime", cmd_uptime),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
     job = app.job_queue.run_repeating(check, interval=settings()["interval_min"] * 60, first=10)
