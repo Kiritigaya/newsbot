@@ -36,6 +36,7 @@ DEFAULT_FEEDS = {
 DEFAULT_SETTINGS = {
     "sources": DEFAULT_FEEDS,
     "keywords": [],
+    "blocked": [],
     "interval_min": int(os.environ.get("INTERVAL_MIN", "30")),
     "autopilot": True,
     "translate": True,
@@ -269,6 +270,8 @@ async def collect_news(bot, chat_id: int, seed_only: bool = False, context=None)
             keys = s["keywords"]
             if keys and not any(k.lower() in title.lower() for k in keys):
                 continue
+            if any(b.lower() in title.lower() for b in s.get("blocked", [])):
+                continue
             if similar_to_recent(title, seen):
                 continue
             seen.add(title_key(title))
@@ -315,6 +318,8 @@ async def collect_digest(hours: int) -> list[tuple[datetime, str, str, str]]:
                 continue
             title = entry.get("title", "")
             if s["keywords"] and not any(k.lower() in title.lower() for k in s["keywords"]):
+                continue
+            if any(b.lower() in title.lower() for b in s.get("blocked", [])):
                 continue
             key = title_key(title)
             if not key or key in used:
@@ -368,7 +373,7 @@ def weather_data(lat: float, lon: float) -> dict | None:
         "latitude": lat, "longitude": lon,
         "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m",
         "hourly": "temperature_2m,precipitation_probability,weather_code",
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max,sunrise,sunset",
         "timezone": os.environ.get("WEATHER_TZ", "Asia/Krasnoyarsk"), "forecast_days": 3,
     }
     try:
@@ -402,7 +407,7 @@ def weather_forecast_text(data: dict, city: str) -> str:
         lines.append(
             f"<b>{label}</b> ({date[5:]}): {WMO.get(d['weather_code'][i], '—')}\n"
             f"  🌡 {d['temperature_2m_min'][i]}°…{d['temperature_2m_max'][i]}°C · "
-            f"осадки {d['precipitation_probability_max'][i]}%\n"
+            f"осадки {d['precipitation_probability_max'][i]}% · UV {d.get('uv_index_max', [0] * 3)[i]}\n"
             f"  🌅 {d['sunrise'][i][-5:]} · 🌇 {d['sunset'][i][-5:]}"
         )
     return f"📅 <b>Прогноз в {html.escape(city)}</b>\n\n" + "\n\n".join(lines)
@@ -534,14 +539,16 @@ async def cmd_help(update, context):
         "/addsource URL — добавить ленту\n"
         "/delsource N — удалить ленту\n"
         "/testsource URL — проверить ленту\n"
-        "/keywords слово1,слово2 — фильтр (пусто = сброс)\n"
+        "/keywords слово1,слово2 — пропускать только эти\n"
+        "/blockwords слово1,слово2 — стоп-слова (исключить)\n"
+        "/preview — предпросмотр новых новостей\n"
         "/interval 30 — интервал в минутах (5–1440)\n"
         "/autopilot on|off — пауза рассылки\n"
         "/translate on|off — перевод на русский\n"
         "/save — сохранить последнюю новость\n"
         "/saved — избранное · /unsave N — удалить из избранного\n"
-        "Погода: /weather /forecast /hourly /city /weatheralerts\n"
-        "/ping — проверка связи",
+        "Погода: /weather /forecast /hourly /city /weatheralerts /air\n"
+        "Прочее: /rates (курсы) /version /ping",
         parse_mode="HTML",
     )
 
@@ -675,6 +682,91 @@ async def cmd_keywords(update, context):
     s["keywords"] = [] if raw.lower() == "clear" else [k.strip() for k in raw.split(",") if k.strip()]
     save_json(SETTINGS_FILE, s)
     await update.message.reply_text("✅ Фильтр: " + (", ".join(s["keywords"]) or "сброшен"))
+
+
+async def cmd_blockwords(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    s = settings()
+    if not args:
+        await update.message.reply_text("Стоп-слова: " + (", ".join(s.get("blocked", [])) or "нет") +
+                                        "\nЗадать: /blockwords сенсация,спойлер\nСбросить: /blockwords clear")
+        return
+    raw = " ".join(args).strip()
+    s["blocked"] = [] if raw.lower() == "clear" else [x.strip() for x in raw.split(",") if x.strip()]
+    save_json(SETTINGS_FILE, s)
+    await update.message.reply_text("✅ Стоп-слова: " + (", ".join(s["blocked"]) or "сброшены"))
+
+
+async def cmd_preview(update, context):
+    if not is_owner(update):
+        return
+    s = settings()
+    seen = load_seen()
+    titles = []
+    for source, url in list(s["sources"].items())[:5]:
+        feed = await asyncio.to_thread(feedparser.parse, url)
+        for entry in feed.entries[:5]:
+            title = entry.get("title", "")
+            uid = entry.get("id") or entry.get("link")
+            if not uid or uid in seen:
+                continue
+            if s["keywords"] and not any(k.lower() in title.lower() for k in s["keywords"]):
+                continue
+            if any(b.lower() in title.lower() for b in s.get("blocked", [])):
+                continue
+            titles.append(f"• {clean(title)[:110]} — {source}")
+    if not titles:
+        await update.message.reply_text("Новых новостей для предпросмотра нет.")
+        return
+    await update.message.reply_text("🔎 <b>Что уйдёт в рассылке</b>\n\n" + "\n".join(titles[:12]),
+                                    parse_mode="HTML")
+
+
+async def cmd_version(update, context):
+    await update.message.reply_text("🤖 News Bot v2.1 · новости + погода + избранное + фильтры")
+
+
+async def cmd_air(update, context):
+    if not is_owner(update):
+        return
+    s = settings()["weather"]
+    params = {"latitude": s["lat"], "longitude": s["lon"],
+              "current": "us_aqi,pm2_5,pm10", "timezone": s.get("timezone", "Asia/Krasnoyarsk")}
+    try:
+        r = await asyncio.to_thread(requests.get,
+                                    "https://air-quality-api.open-meteo.com/v1/air-quality",
+                                    params=params, timeout=20)
+        r.raise_for_status()
+        c = r.json()["current"]
+        aqi = c.get("us_aqi")
+        label = "хорошо" if aqi is not None and aqi <= 50 else "умеренно" if aqi is not None and aqi <= 100 else "плохо"
+        await update.message.reply_text(
+            f"🌬 <b>Качество воздуха · {html.escape(s['city'])}</b>\n\n"
+            f"AQI (US): {aqi} — {label}\n"
+            f"PM2.5: {c.get('pm2_5')} мкг/м³\n"
+            f"PM10: {c.get('pm10')} мкг/м³", parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"Сервис качества воздуха недоступен: {e}")
+
+
+async def cmd_rates(update, context):
+    if not is_owner(update):
+        return
+    try:
+        r = await asyncio.to_thread(requests.get,
+                                    "https://api.frankfurter.dev/v1/latest",
+                                    params={"base": "USD", "symbols": "RUB,EUR"}, timeout=20)
+        r.raise_for_status()
+        rates = r.json()["rates"]
+        usd = rates["RUB"]
+        eur = usd / rates["EUR"]
+        await update.message.reply_text(
+            f"💱 <b>Курсы</b> ({r.json().get('date', '')})\n\n"
+            f"1 USD = {usd:.2f} ₽\n1 EUR = {eur:.2f} ₽")
+    except Exception as e:
+        await update.message.reply_text(f"Не удалось получить курсы: {e}")
 
 
 async def reschedule(context) -> None:
@@ -841,7 +933,10 @@ def main() -> None:
         ("status", cmd_status), ("stats", cmd_stats),
         ("sources", cmd_sources), ("addsource", cmd_addsource),
         ("delsource", cmd_delsource), ("testsource", cmd_testsource),
-        ("keywords", cmd_keywords), ("interval", cmd_interval),
+        ("keywords", cmd_keywords), ("blockwords", cmd_blockwords),
+        ("preview", cmd_preview), ("version", cmd_version),
+        ("air", cmd_air), ("rates", cmd_rates),
+        ("interval", cmd_interval),
         ("autopilot", cmd_autopilot), ("translate", cmd_translate),
         ("settings", cmd_settings), ("saved", cmd_saved),
         ("unsave", cmd_unsave), ("ping", cmd_ping),
