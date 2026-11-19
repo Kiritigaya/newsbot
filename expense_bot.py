@@ -9,7 +9,8 @@ import io
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -96,21 +97,32 @@ async def cmd_help(update, context):
         "/categories — список категорий\n"
         "/budget 30000 — месячный лимит расходов (0 = сбросить)\n"
         "/delete 3 — удалить запись из /today\n"
-        "/export — выгрузить CSV файл",
+        "/undo — удалить последнюю запись\n"
+        "/tagged тег — сумма по тегу\n"
+        "/compare — этот месяц против прошлого\n"
+        "/export — выгрузить CSV файл\n\n"
+        "Можно писать просто текстом: «сколько на еду в этом месяце?»",
         parse_mode="HTML")
 
 
 def add_expense(chat_id: int, amount: int, category: str, comment: str,
-                kind: str = "expense") -> int:
+                kind: str = "expense", tags: list[str] | None = None) -> int:
     expenses = load_json(EXPENSES_FILE, [])
     rid = max([e["id"] for e in expenses], default=0) + 1
     expenses.append({
         "id": rid, "chat_id": chat_id, "amount": amount,
         "category": category, "comment": comment, "kind": kind,
+        "tags": tags or [],
         "date": datetime.now(TZ).isoformat(),
     })
     save_json(EXPENSES_FILE, expenses)
     return rid
+
+
+def extract_tags(text: str) -> tuple[str, list[str]]:
+    tags = re.findall(r"#([А-Яа-яA-Za-z0-9_-]+)", text)
+    clean_text = re.sub(r"#[А-Яа-яA-Za-z0-9_-]+", "", text).strip()
+    return clean_text, tags
 
 
 async def cmd_spend(update, context):
@@ -128,7 +140,7 @@ async def cmd_spend(update, context):
     if amount <= 0:
         await update.message.reply_text("Сумма должна быть положительной.")
         return
-    rest = " ".join(args[1:]).strip()
+    rest, tags = extract_tags(" ".join(args[1:]).strip())
     category = "другое"
     comment = rest
     low = rest.lower()
@@ -137,10 +149,25 @@ async def cmd_spend(update, context):
             category = c
             comment = rest.replace(c, "").strip()
             break
-    rid = add_expense(update.effective_chat.id, amount, category, comment)
-    await update.message.reply_text(
-        f"✅ Добавлено #{rid}: {fmt_money(amount)} ₽ · {EMOJI[category]} {category}"
-        + (f" · {html.escape(comment)}" if comment else ""), parse_mode="HTML")
+    rid = add_expense(update.effective_chat.id, amount, category, comment, tags=tags)
+    text = (f"✅ Добавлено #{rid}: {fmt_money(amount)} ₽ · {EMOJI[category]} {category}"
+            + (f" · {html.escape(comment)}" if comment else "")
+            + (" · " + " ".join("#" + html.escape(t) for t in tags) if tags else ""))
+    await update.message.reply_text(text, parse_mode="HTML")
+
+    # Алерт по бюджету
+    s = load_json(SETTINGS_FILE, {})
+    budget = s.get("budget", 0)
+    if budget:
+        spent = sum(e["amount"] for e in list_for(month()) if e.get("kind") != "income")
+        if spent >= budget:
+            await update.message.reply_text(
+                f"🚨 <b>Лимит превышен!</b> Расходы за месяц: {fmt_money(spent)} ₽ при лимите {fmt_money(budget)} ₽",
+                parse_mode="HTML")
+        elif spent >= budget * 0.8:
+            await update.message.reply_text(
+                f"⚠️ Израсходовано {int(spent / budget * 100)}% лимита: {fmt_money(spent)} ₽ из {fmt_money(budget)} ₽",
+                parse_mode="HTML")
 
 
 async def cmd_income(update, context):
@@ -215,7 +242,9 @@ async def on_message(update, context):
         rid = add_expense(update.effective_chat.id, amount, category, "")
         await update.message.reply_text(f"✅ Добавлено #{rid}: {fmt_money(amount)} ₽ · {category}")
         return
-    await update.message.reply_text("Добавить расход: /spend 500 кофе · /add")
+    if await natural_query(update, context):
+        return
+    await update.message.reply_text("Добавить расход: /spend 500 кофе · /add · /income 50000")
 
 
 def list_for(period: str) -> list[dict]:
@@ -331,6 +360,100 @@ async def cmd_delete(update, context):
     await update.message.reply_text(f"🗑 Запись #{rid} удалена.")
 
 
+async def cmd_undo(update, context):
+    if not is_owner(update):
+        return
+    expenses = load_json(EXPENSES_FILE, [])
+    mine = [e for e in expenses if e["chat_id"] == update.effective_chat.id]
+    if not mine:
+        await update.message.reply_text("Нечего отменять.")
+        return
+    last = max(mine, key=lambda e: e["id"])
+    save_json(EXPENSES_FILE, [e for e in expenses if e["id"] != last["id"]])
+    await update.message.reply_text(f"↩️ Отменено: #{last['id']} · {fmt_money(last['amount'])} ₽")
+
+
+async def cmd_tagged(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Формат: /tagged тег (без #)")
+        return
+    tag = args[0].lstrip("#").lower()
+    items = [e for e in load_json(EXPENSES_FILE, []) if tag in [t.lower() for t in e.get("tags", [])]]
+    if not items:
+        await update.message.reply_text("По этому тегу ничего нет.")
+        return
+    total = sum(e["amount"] for e in items)
+    lines = [f'#{e["id"]} · {fmt_money(e["amount"])} ₽ · {html.escape(e["comment"])}' for e in items[-10:]]
+    await update.message.reply_text(f"🏷 <b>#{html.escape(tag)}</b> · {len(items)} записей\n\n"
+                                    + "\n".join(lines) + f"\n\n<b>Итого: {fmt_money(total)} ₽</b>", parse_mode="HTML")
+
+
+async def cmd_compare(update, context):
+    if not is_owner(update):
+        return
+    def total_for(period: str) -> int:
+        return sum(e["amount"] for e in list_for(period) if e.get("kind") != "income")
+    now = datetime.now(TZ)
+    prev = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    cur, old = total_for(month()), total_for(prev)
+    diff = cur - old
+    sign = "+" if diff > 0 else ""
+    percent = int(diff / old * 100) if old else 0
+    await update.message.reply_text(
+        f"📊 <b>Сравнение месяцев</b>\n\n"
+        f"{prev}: {fmt_money(old)} ₽\n"
+        f"{month()}: {fmt_money(cur)} ₽\n"
+        f"Изменение: {sign}{fmt_money(diff)} ₽ ({sign}{percent}%)", parse_mode="HTML")
+
+
+async def natural_query(update, context):
+    text = (update.message.text or "").lower().strip()
+    if not any(w in text for w in ("сколько", "итог", "потратил", "расход", "доход")):
+        return False
+    category = next((c for c in CATEGORIES if c in text), None)
+    period = month() if ("месяц" in text or "месяце" in text) else today()
+    items = [e for e in list_for(period) if e["date"][:10] == today()] if period == today() else list_for(period)
+    if category:
+        items = [e for e in items if e["category"] == category]
+    income = sum(e["amount"] for e in items if e.get("kind") == "income")
+    expense = sum(e["amount"] for e in items if e.get("kind") != "income")
+    label = category or "все категории"
+    await update.message.reply_text(
+        f"💬 {label} · {period}:\n💸 Расходы {fmt_money(expense)} ₽ · 💵 Доходы {fmt_money(income)} ₽")
+    return True
+
+
+async def evening_report(context):
+    items = [e for e in load_json(EXPENSES_FILE, []) if e["date"][:10] == today()]
+    expense = sum(e["amount"] for e in items if e.get("kind") != "income")
+    month_total = sum(e["amount"] for e in list_for(month()) if e.get("kind") != "income")
+    await context.bot.send_message(
+        get_owner(),
+        f"🌙 <b>Итоги дня</b>\n\nСегодня: {fmt_money(expense)} ₽\n"
+        f"За месяц: {fmt_money(month_total)} ₽",
+        parse_mode="HTML")
+
+
+async def weekly_report(context):
+    now = datetime.now(TZ)
+    start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    items = [e for e in load_json(EXPENSES_FILE, []) if start <= e["date"][:10] <= today()]
+    totals = {}
+    for e in items:
+        if e.get("kind") != "income":
+            totals[e["category"]] = totals.get(e["category"], 0) + e["amount"]
+    if not totals:
+        return
+    lines = [f"{EMOJI.get(c, '📦')} {c}: {fmt_money(v)} ₽" for c, v in sorted(totals.items(), key=lambda x: -x[1])]
+    await context.bot.send_message(
+        get_owner(),
+        "📊 <b>Итоги недели</b>\n\n" + "\n".join(lines) + f"\n\nВсего: {fmt_money(sum(totals.values()))} ₽",
+        parse_mode="HTML")
+
+
 async def cmd_export(update, context):
     if not is_owner(update):
         return
@@ -356,10 +479,13 @@ def main():
         ("add", cmd_add), ("today", cmd_today), ("month", cmd_month),
         ("stats", cmd_stats), ("categories", cmd_categories),
         ("budget", cmd_budget), ("delete", cmd_delete), ("export", cmd_export),
+        ("undo", cmd_undo), ("tagged", cmd_tagged), ("compare", cmd_compare),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    app.job_queue.run_daily(evening_report, time=time(hour=22, minute=0, tzinfo=TZ))
+    app.job_queue.run_daily(weekly_report, time=time(hour=20, minute=0, tzinfo=TZ), days=(6,))
     app.run_polling(bootstrap_retries=10, timeout=30)
 
 
