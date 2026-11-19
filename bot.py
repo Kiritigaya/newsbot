@@ -11,11 +11,13 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import feedparser
+import requests
 from deep_translator import GoogleTranslator, MyMemoryTranslator
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
@@ -37,6 +39,20 @@ DEFAULT_SETTINGS = {
     "interval_min": int(os.environ.get("INTERVAL_MIN", "30")),
     "autopilot": True,
     "translate": True,
+    "weather": {"city": "Красноярск", "lat": 56.0106, "lon": 92.8526, "alerts": True},
+}
+WEATHER_TZ = ZoneInfo(os.environ.get("WEATHER_TZ", "Asia/Krasnoyarsk"))
+WMO = {
+    0: "ясно ☀️", 1: "преимущественно ясно 🌤", 2: "переменная облачность ⛅",
+    3: "пасмурно ☁️", 45: "туман 🌫", 48: "изморозь 🌫",
+    51: "лёгкая морось", 53: "морось", 55: "сильная морось",
+    56: "ледяная морось", 57: "ледяная морось",
+    61: "небольшой дождь 🌦", 63: "дождь 🌧", 65: "сильный дождь 🌧",
+    66: "ледяной дождь", 67: "ледяной дождь",
+    71: "небольшой снег 🌨", 73: "снег ❄️", 75: "сильный снег ❄️",
+    77: "снежные зёрна", 80: "небольшие ливни", 81: "ливни", 82: "сильные ливни",
+    85: "снегопад", 86: "сильный снегопад", 95: "гроза ⛈",
+    96: "гроза с градом", 99: "гроза с градом",
 }
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "."))
@@ -346,6 +362,149 @@ async def send_digest(update, context, hours: int, label: str) -> None:
         await asyncio.sleep(0.5)
 
 
+# ---------------- Погода ----------------
+def weather_data(lat: float, lon: float) -> dict | None:
+    params = {
+        "latitude": lat, "longitude": lon,
+        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m",
+        "hourly": "temperature_2m,precipitation_probability,weather_code",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
+        "timezone": os.environ.get("WEATHER_TZ", "Asia/Krasnoyarsk"), "forecast_days": 3,
+    }
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=20)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        log.error("Open-Meteo: %s", e)
+        return None
+
+
+def weather_now_text(data: dict, city: str) -> str:
+    c = data["current"]
+    code = c["weather_code"]
+    return (
+        f"🌤 <b>Погода в {html.escape(city)}</b>\n\n"
+        f"{WMO.get(code, 'неизвестно')}\n"
+        f"🌡 {c['temperature_2m']}°C (ощущается {c['apparent_temperature']}°C)\n"
+        f"💧 Влажность: {c['relative_humidity_2m']}%\n"
+        f"💨 Ветер: {c['wind_speed_10m']} км/ч\n"
+        f"🌧 Осадки: {c['precipitation']} мм\n"
+        f"🕐 Обновлено: {html.escape(c['time'][-5:])}"
+    )
+
+
+def weather_forecast_text(data: dict, city: str) -> str:
+    d = data["daily"]
+    lines = []
+    for i, date in enumerate(d["time"]):
+        label = ["Сегодня", "Завтра", "Послезавтра"][i] if i < 3 else date
+        lines.append(
+            f"<b>{label}</b> ({date[5:]}): {WMO.get(d['weather_code'][i], '—')}\n"
+            f"  🌡 {d['temperature_2m_min'][i]}°…{d['temperature_2m_max'][i]}°C · "
+            f"осадки {d['precipitation_probability_max'][i]}%\n"
+            f"  🌅 {d['sunrise'][i][-5:]} · 🌇 {d['sunset'][i][-5:]}"
+        )
+    return f"📅 <b>Прогноз в {html.escape(city)}</b>\n\n" + "\n\n".join(lines)
+
+
+async def get_weather():
+    s = settings()["weather"]
+    return await asyncio.to_thread(weather_data, s["lat"], s["lon"])
+
+
+async def cmd_weather(update, context):
+    if not is_owner(update):
+        return
+    data = await get_weather()
+    if not data:
+        await update.message.reply_text("Сервис погоды недоступен.")
+        return
+    s = settings()["weather"]
+    await update.message.reply_text(weather_now_text(data, s["city"]), parse_mode="HTML")
+
+
+async def cmd_forecast(update, context):
+    if not is_owner(update):
+        return
+    data = await get_weather()
+    if not data:
+        await update.message.reply_text("Сервис погоды недоступен.")
+        return
+    s = settings()["weather"]
+    await update.message.reply_text(weather_forecast_text(data, s["city"]), parse_mode="HTML")
+
+
+async def cmd_hourly(update, context):
+    if not is_owner(update):
+        return
+    data = await get_weather()
+    if not data:
+        await update.message.reply_text("Сервис погоды недоступен.")
+        return
+    h = data["hourly"]
+    now = datetime.now(WEATHER_TZ).replace(minute=0, second=0, microsecond=0)
+    lines = []
+    for i, ts in enumerate(h["time"]):
+        dt = datetime.fromisoformat(ts)
+        if dt < now or len(lines) >= 8:
+            continue
+        lines.append(f"{dt.strftime('%H:%M')}: {h['temperature_2m'][i]}°C · "
+                     f"осадки {h['precipitation_probability'][i]}% · {WMO.get(h['weather_code'][i], '—')}")
+    await update.message.reply_text("🕐 <b>По часам</b>\n\n" + "\n".join(lines), parse_mode="HTML")
+
+
+async def cmd_city_weather(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Формат: /city Красноярск")
+        return
+    try:
+        r = await asyncio.to_thread(requests.get,
+                                    "https://geocoding-api.open-meteo.com/v1/search",
+                                    params={"name": " ".join(args), "count": 1,
+                                            "language": "ru", "format": "json"}, timeout=15)
+        results = r.json().get("results", [])
+        if not results:
+            await update.message.reply_text("Город не найден.")
+            return
+        place = results[0]
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка поиска: {e}")
+        return
+    s = settings()
+    s["weather"]["city"] = place["name"]
+    s["weather"]["lat"] = place["latitude"]
+    s["weather"]["lon"] = place["longitude"]
+    save_json(SETTINGS_FILE, s)
+    await update.message.reply_text(f"✅ Город погоды: {place['name']}")
+
+
+async def cmd_weather_alerts(update, context):
+    if not is_owner(update):
+        return
+    s = settings()
+    s["weather"]["alerts"] = not s["weather"]["alerts"]
+    save_json(SETTINGS_FILE, s)
+    await update.message.reply_text(f"Утренняя погода: {'включена' if s['weather']['alerts'] else 'выключена'}")
+
+
+async def daily_weather(context):
+    s = settings()["weather"]
+    if not s["alerts"]:
+        return
+    data = await get_weather()
+    if not data:
+        return
+    text = "☀️ <b>Доброе утро!</b>\n\n" + weather_now_text(data, s["city"]) + "\n\n" + weather_forecast_text(data, s["city"])
+    try:
+        await context.bot.send_message(get_chat_id(), text[:4000], parse_mode="HTML")
+    except Exception as e:
+        log.error("Погода не отправлена: %s", e)
+
+
 # ---------------- Команды ----------------
 async def cmd_start(update, context):
     chat_id = update.effective_chat.id
@@ -381,6 +540,7 @@ async def cmd_help(update, context):
         "/translate on|off — перевод на русский\n"
         "/save — сохранить последнюю новость\n"
         "/saved — избранное · /unsave N — удалить из избранного\n"
+        "Погода: /weather /forecast /hourly /city /weatheralerts\n"
         "/ping — проверка связи",
         parse_mode="HTML",
     )
@@ -685,6 +845,9 @@ def main() -> None:
         ("autopilot", cmd_autopilot), ("translate", cmd_translate),
         ("settings", cmd_settings), ("saved", cmd_saved),
         ("unsave", cmd_unsave), ("ping", cmd_ping),
+        ("weather", cmd_weather), ("forecast", cmd_forecast),
+        ("hourly", cmd_hourly), ("city", cmd_city_weather),
+        ("weatheralerts", cmd_weather_alerts),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
     app.add_handler(CallbackQueryHandler(on_button))
@@ -692,6 +855,7 @@ def main() -> None:
         scheduled, interval=settings()["interval_min"] * 60, first=5
     )
     app.bot_data["news_job"] = job
+    app.job_queue.run_daily(daily_weather, time=time(hour=8, minute=0, tzinfo=WEATHER_TZ))
     app.run_polling(bootstrap_retries=10, timeout=30)
 
 
