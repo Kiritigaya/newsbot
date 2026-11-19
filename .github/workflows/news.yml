@@ -1,8 +1,6 @@
-name: News bot # v2
+name: News bot
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,20 +16,26 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Prepare and install
-        run: |
-          mkdir -p state
-          pip install -r requirements.txt
+      - name: Install
+        run: pip install -r requirements.txt
 
       - name: Run bot
+        timeout-minutes: 350
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           TRANSLATE_EMAIL: ${{ secrets.TRANSLATE_EMAIL }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           DATA_DIR: state
-        run: python runner.py
+        run: |
+          mkdir -p state
+          while true; do
+            python bot.py
+            echo "bot exited, restarting in 5s"
+            sleep 5
+          done
 
       - name: Save state
+        if: always()
         run: |
           git config user.name "newsbot"
           git config user.email "newsbot@users.noreply.github.com"
@@ -39,4 +43,22 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "Update bot state"
             git push
+          fi
+
+      - name: Chain next run
+        if: always()
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          sleep 10
+          count=$(curl -sS -H "Authorization: token $GH_PAT" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Kiritigaya/newsbot/actions/workflows/news.yml/runs?status=in_progress" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['total_count'])")
+          echo "in_progress runs: $count"
+          if [ "$count" -le 1 ]; then
+            curl -sS -X POST -H "Authorization: token $GH_PAT" \
+              -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
+              -d '{"ref":"main"}' \
+              "https://api.github.com/repos/Kiritigaya/newsbot/actions/workflows/news.yml/dispatches"
+            echo "next run dispatched"
           fi
