@@ -56,14 +56,19 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           REMINDER_BOT_TOKEN: ${{ secrets.REMINDER_BOT_TOKEN }}
           DEALS_BOT_TOKEN: ${{ secrets.DEALS_BOT_TOKEN }}
+          EXPENSE_BOT_TOKEN: ${{ secrets.EXPENSE_BOT_TOKEN }}
+          MONITOR_BOT_TOKEN: ${{ secrets.MONITOR_BOT_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
           TRANSLATE_EMAIL: ${{ secrets.TRANSLATE_EMAIL }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           TZ_OFFSET: '7'
         run: |
-          mkdir -p state reminder_data deals_data
+          mkdir -p state reminder_data deals_data expense_data monitor_data
           (while true; do python bot.py; echo "news bot exited, restarting"; sleep 5; done) &
           (while true; do python reminder_bot.py; echo "reminder bot exited, restarting"; sleep 5; done) &
           (while true; do python deals_bot.py; echo "deals bot exited, restarting"; sleep 5; done) &
+          (while true; do python expense_bot.py; echo "expense bot exited, restarting"; sleep 5; done) &
+          (while true; do python monitor_bot.py; echo "monitor bot exited, restarting"; sleep 5; done) &
           wait
 
       - name: Save state
@@ -71,7 +76,7 @@ jobs:
         run: |
           git config user.name "newsbot"
           git config user.email "newsbot@users.noreply.github.com"
-          git add -A state reminder_data deals_data
+          git add -A state reminder_data deals_data expense_data monitor_data
           if ! git diff --cached --quiet; then
             git commit -m "Update bot state"
             git push
