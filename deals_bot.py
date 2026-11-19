@@ -46,6 +46,7 @@ DEFAULT_SETTINGS = {
     "min_price": 0,
     "min_discount": 0,
     "sort": "date",          # date | price | discount
+    "limit": 10,             # сколько предложений за проверку
     "city": os.environ.get("DEALS_CITY", "Красноярск"),
     "sources": [
         "https://www.androidauthority.com/feed/",
@@ -213,7 +214,7 @@ async def collect_deals() -> list[dict]:
                 a["hits"] += 1
                 item["alert_model"] = a["model"]
     save_json(ALERTS_FILE, alerts)
-    return found[:10]
+    return found[:s.get("limit", 10)]
 
 
 def panel_keyboard(s: dict) -> InlineKeyboardMarkup:
@@ -281,7 +282,8 @@ async def cmd_help(update, context):
         "/price 50000 — макс. цена (0 = без лимита)\n"
         "/minprice 10000 — мин. цена\n"
         "/discount 20 — мин. скидка в %\n"
-        "/sort date|price|discount\n"
+        "/sort date|price|discount · /limit 5\n"
+        "/top — лучшие предложения по скидке\n"
         "/brands Samsung,Xiaomi · /brands all\n"
         "/source URL · /sources · /delsource N · /testsource URL\n"
         "/on /off — включить/выключить проверку",
@@ -320,6 +322,7 @@ async def send_deals(context, chat_id: int, deals: list[dict]):
         markup = InlineKeyboardMarkup([[
             InlineKeyboardButton("⭐ В избранное", callback_data=f"fav|{key}"),
             InlineKeyboardButton("🔗 Ссылка", url=item.get("link") or "https://t.me"),
+            InlineKeyboardButton("❌", callback_data=f"hide|{key}"),
         ]])
         await context.bot.send_message(chat_id, text, parse_mode="HTML",
                                        disable_web_page_preview=False, reply_markup=markup)
@@ -515,6 +518,42 @@ async def cmd_sort(update, context):
     await update.message.reply_text(f"✅ Сортировка: {args[0]}")
 
 
+async def cmd_limit(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Формат: /limit 5 (1–20)")
+        return
+    value = min(max(int(args[0]), 1), 20)
+    s = settings()
+    s["limit"] = value
+    save_json(SETTINGS_FILE, s)
+    await update.message.reply_text(f"✅ Предложений за проверку: {value}")
+
+
+async def cmd_top(update, context):
+    if not is_owner(update):
+        return
+    history = load_json(HISTORY_FILE, [])
+    deals = [h for h in history if h.get("discount") or h.get("price")]
+    if not deals:
+        await update.message.reply_text("Пока нет данных по скидкам.")
+        return
+    deals.sort(key=lambda x: (x.get("discount") or 0, -(x.get("price") or 0)), reverse=True)
+    lines = []
+    for i, item in enumerate(deals[:10], 1):
+        link = html.escape(item.get("link", ""), quote=True)
+        line = f'{i}. <a href="{link}">{html.escape(item["title"][:70])}</a>'
+        if item.get("discount"):
+            line += f" · −{item['discount']}%"
+        if item.get("price"):
+            line += f" · ~{item['price']} ₽"
+        lines.append(line)
+    await update.message.reply_text("🏆 <b>Лучшие предложения</b>\n\n" + "\n".join(lines),
+                                    parse_mode="HTML", disable_web_page_preview=True)
+
+
 async def cmd_brands(update, context):
     if not is_owner(update):
         return
@@ -634,6 +673,16 @@ async def on_button(update, context):
         text = "\n".join(f"{i}. {u}" for i, u in enumerate(s["sources"], 1))
         await query.edit_message_text("Источники:\n" + text[:3000] + "\n\nДобавить: /source URL")
         return
+    elif data.startswith("hide|"):
+        key = data.split("|", 1)[1]
+        item = context.bot_data.get("deal_items", {}).get(key)
+        if item:
+            seen = set(load_json(SEEN_FILE, []))
+            seen.add(item.get("link") or item["title"])
+            save_json(SEEN_FILE, list(seen)[-3000:])
+        await query.answer("Скрыто")
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
     elif data.startswith("fav|"):
         key = data.split("|", 1)[1]
         item = context.bot_data.get("deal_items", {}).get(key)
@@ -673,7 +722,8 @@ def main():
         ("favorites", cmd_favorites), ("unsave", cmd_unsave),
         ("alerts", cmd_alerts), ("alert", cmd_alert), ("delalert", cmd_delalert),
         ("city", cmd_city), ("price", cmd_price), ("minprice", cmd_minprice),
-        ("discount", cmd_discount), ("sort", cmd_sort), ("brands", cmd_brands),
+        ("discount", cmd_discount), ("sort", cmd_sort), ("limit", cmd_limit),
+        ("top", cmd_top), ("brands", cmd_brands),
         ("source", cmd_source), ("sources", cmd_sources),
         ("delsource", cmd_delsource), ("testsource", cmd_testsource),
         ("on", lambda u, c: cmd_toggle(u, c, True)),
