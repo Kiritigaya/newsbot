@@ -1,0 +1,42 @@
+name: News bot
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare and install
+        run: |
+          mkdir -p state
+          pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          TRANSLATE_EMAIL: ${{ secrets.TRANSLATE_EMAIL }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          DATA_DIR: state
+        run: python runner.py
+
+      - name: Save state
+        run: |
+          git config user.name "newsbot"
+          git config user.email "newsbot@users.noreply.github.com"
+          git add -A state
+          if ! git diff --cached --quiet; then
+            git commit -m "Update bot state"
+            git push
+          fi
