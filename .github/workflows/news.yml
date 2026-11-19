@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Guard - only one bot at a time
+      - name: Guard - only one set of bots at a time
         id: guard
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -27,8 +27,6 @@ jobs:
             "https://api.github.com/repos/Kiritigaya/newsbot/actions/workflows/news.yml/runs?status=in_progress" \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['total_count'])")
           echo "in_progress runs (including me): $count"
-          # The previous run may still be finishing right after it dispatches us.
-          # Wait up to 2 minutes for it to disappear before deciding.
           proceed=false
           for i in $(seq 1 12); do
             others=$((count - 1))
@@ -51,28 +49,29 @@ jobs:
         if: steps.guard.outputs.proceed == 'true'
         run: pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Run bots
         if: steps.guard.outputs.proceed == 'true'
         timeout-minutes: 350
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          REMINDER_BOT_TOKEN: ${{ secrets.REMINDER_BOT_TOKEN }}
+          DEALS_BOT_TOKEN: ${{ secrets.DEALS_BOT_TOKEN }}
           TRANSLATE_EMAIL: ${{ secrets.TRANSLATE_EMAIL }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          DATA_DIR: state
+          TZ_OFFSET: '7'
         run: |
-          mkdir -p state
-          while true; do
-            python bot.py
-            echo "bot exited, restarting in 5s"
-            sleep 5
-          done
+          mkdir -p state reminder_data deals_data
+          (while true; do python bot.py; echo "news bot exited, restarting"; sleep 5; done) &
+          (while true; do python reminder_bot.py; echo "reminder bot exited, restarting"; sleep 5; done) &
+          (while true; do python deals_bot.py; echo "deals bot exited, restarting"; sleep 5; done) &
+          wait
 
       - name: Save state
         if: always() && steps.guard.outputs.proceed == 'true'
         run: |
           git config user.name "newsbot"
           git config user.email "newsbot@users.noreply.github.com"
-          git add -A state
+          git add -A state reminder_data deals_data
           if ! git diff --cached --quiet; then
             git commit -m "Update bot state"
             git push
