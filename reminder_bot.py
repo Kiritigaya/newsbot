@@ -65,6 +65,12 @@ def fmt_dt(dt: datetime) -> str:
     return dt.strftime("%d.%m.%y %H:%M")
 
 
+def mark(r: dict) -> str:
+    p = "🔴 " if r.get("priority") == "high" else "🔵 " if r.get("priority") == "low" else ""
+    tags = " ".join("#" + t for t in r.get("tags", []))
+    return p + (tags + " " if tags else "")
+
+
 def strip_quotes(text: str) -> str:
     return text.strip().strip('"«»""').strip()
 
@@ -169,7 +175,8 @@ async def add_reminder(chat_id: int, text: str) -> str:
     reminders = load_json(REM_FILE, [])
     rid = max([r["id"] for r in reminders], default=0) + 1
     reminders.append({"id": rid, "chat_id": chat_id, "time": dt.isoformat(),
-                      "text": body, "repeat": repeat or ""})
+                      "text": body, "repeat": repeat or "",
+                      "priority": "", "tags": []})
     reminders.sort(key=lambda r: r["time"])
     save_json(REM_FILE, reminders)
     rep = {"daily": " · каждый день", "weekly": " · каждую неделю", "monthly": " · каждый месяц"}.get(repeat, "")
@@ -203,6 +210,9 @@ async def cmd_help(update, context):
         "/snooze 3 10 — отложить на 10 минут\n"
         "/clear — удалить все (с подтверждением)\n"
         "/count — количество записей\n"
+        "/repeat 3 daily|weekly|monthly — повтор\n"
+        "/priority 3 high|low — приоритет 🔴/🔵\n"
+        "/tag 3 работа — тег · /tagged работа — поиск по тегу\n"
         "/tz 7 — часовой пояс\n\n"
         "Форматы ввода:\n"
         '14.11.26 17:30 "Текст"\n'
@@ -232,7 +242,7 @@ async def records_page(update, context, page: int = 0):
     for r in chunk:
         dt = datetime.fromisoformat(r["time"])
         rep = {"daily": " 🔁", "weekly": " 🔁", "monthly": " 🔁"}.get(r.get("repeat"), "")
-        rows.append(f'#{r["id"]} · {fmt_dt(dt)}{rep} — {html.escape(r["text"])}')
+        rows.append(f'#{r["id"]} · {mark(r)}{fmt_dt(dt)}{rep} — {html.escape(r["text"])}')
     keyboard = []
     for r in chunk:
         keyboard.append([
@@ -293,7 +303,7 @@ async def cmd_find(update, context):
         return
     lines = []
     for r in found[:15]:
-        lines.append(f'#{r["id"]} · {fmt_dt(datetime.fromisoformat(r["time"]))} — {html.escape(r["text"])}')
+        lines.append(f'#{r["id"]} · {mark(r)}{fmt_dt(datetime.fromisoformat(r["time"]))} — {html.escape(r["text"])}')
     await update.message.reply_text("🔍 " + "\n".join(lines), parse_mode="HTML")
 
 
@@ -430,7 +440,7 @@ async def on_button(update, context):
         pages = (len(all_items) + per_page - 1) // per_page
         page = max(0, min(page, pages - 1))
         chunk = all_items[page * per_page:(page + 1) * per_page]
-        rows = [f'#{r["id"]} · {fmt_dt(datetime.fromisoformat(r["time"]))} — {html.escape(r["text"])}' for r in chunk]
+        rows = [f'#{r["id"]} · {mark(r)}{fmt_dt(datetime.fromisoformat(r["time"]))} — {html.escape(r["text"])}' for r in chunk]
         keyboard = []
         for r in chunk:
             keyboard.append([
@@ -525,6 +535,86 @@ async def check_due(context):
     save_json(REM_FILE, remaining)
 
 
+async def cmd_repeat(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    if len(args) < 2 or args[1] not in ("daily", "weekly", "monthly", "off"):
+        await update.message.reply_text("Формат: /repeat 3 daily|weekly|monthly|off")
+        return
+    rid = int(args[0]) if args[0].isdigit() else -1
+    reminders = load_json(REM_FILE, [])
+    item = next((r for r in reminders if r["id"] == rid), None)
+    if not item:
+        await update.message.reply_text("Запись не найдена.")
+        return
+    rule = "" if args[1] == "off" else args[1]
+    item["repeat"] = rule
+    if rule:
+        dt = next_time(item, rule)
+        if dt <= now_local():
+            dt = next_time({"time": now_local().isoformat()}, rule)
+        item["time"] = dt.isoformat()
+    save_json(REM_FILE, reminders)
+    await update.message.reply_text(f"🔁 Запись #{rid}: повтор {rule or 'выключен'}")
+
+
+async def cmd_priority(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    if len(args) < 2 or args[1] not in ("high", "low", "none"):
+        await update.message.reply_text("Формат: /priority 3 high|low|none")
+        return
+    rid = int(args[0]) if args[0].isdigit() else -1
+    reminders = load_json(REM_FILE, [])
+    item = next((r for r in reminders if r["id"] == rid), None)
+    if not item:
+        await update.message.reply_text("Запись не найдена.")
+        return
+    item["priority"] = "" if args[1] == "none" else args[1]
+    save_json(REM_FILE, reminders)
+    await update.message.reply_text(f"✅ Приоритет #{rid}: {args[1]}")
+
+
+async def cmd_tag(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text("Формат: /tag 3 работа")
+        return
+    rid = int(args[0]) if args[0].isdigit() else -1
+    tag = args[1].lstrip("#").lower()
+    reminders = load_json(REM_FILE, [])
+    item = next((r for r in reminders if r["id"] == rid), None)
+    if not item:
+        await update.message.reply_text("Запись не найдена.")
+        return
+    tags = item.setdefault("tags", [])
+    if tag not in tags:
+        tags.append(tag)
+    save_json(REM_FILE, reminders)
+    await update.message.reply_text(f"🏷 #{rid}: #{tag}")
+
+
+async def cmd_tagged(update, context):
+    if not is_owner(update):
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Формат: /tagged работа")
+        return
+    tag = args[0].lstrip("#").lower()
+    found = [r for r in own_reminders(update.effective_chat.id) if tag in r.get("tags", [])]
+    if not found:
+        await update.message.reply_text("По этому тегу ничего нет.")
+        return
+    lines = [f'#{r["id"]} · {mark(r)}{fmt_dt(datetime.fromisoformat(r["time"]))} — {html.escape(r["text"])}'
+             for r in found[:15]]
+    await update.message.reply_text(f"🏷 <b>#{html.escape(tag)}</b>\n\n" + "\n".join(lines), parse_mode="HTML")
+
+
 def main():
     app = Application.builder().token(TOKEN).build()
     for cmd, handler in [
@@ -532,7 +622,9 @@ def main():
         ("list", cmd_list), ("next", cmd_next), ("find", cmd_find),
         ("edit", cmd_edit), ("delete", cmd_delete), ("done", cmd_done),
         ("snooze", cmd_snooze), ("clear", cmd_clear), ("tz", cmd_tz),
-        ("count", cmd_count),
+        ("count", cmd_count), ("repeat", cmd_repeat),
+        ("priority", cmd_priority), ("tag", cmd_tag),
+        ("tagged", cmd_tagged),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
     app.add_handler(CallbackQueryHandler(on_button))
