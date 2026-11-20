@@ -61,6 +61,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 SEEN_FILE = DATA_DIR / "seen.json"
 CHAT_ID_FILE = DATA_DIR / "chat_id.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+SEEN_TITLES_FILE = DATA_DIR / "seen_titles.json"
 SAVED_FILE = DATA_DIR / "saved.json"
 STATS_FILE = DATA_DIR / "stats.json"
 START_TIME = datetime.now(timezone.utc)
@@ -90,12 +91,30 @@ def settings() -> dict:
     return s
 
 
-def load_seen() -> set[str]:
-    return set(load_json(SEEN_FILE, []))
+def load_seen() -> list[str]:
+    """Список ID в порядке добавления (старые → новые)."""
+    data = load_json(SEEN_FILE, [])
+    return data if isinstance(data, list) else list(data)
 
 
-def save_seen(seen: set[str]) -> None:
-    save_json(SEEN_FILE, list(seen)[-3000:])
+def save_seen(items: list[str]) -> None:
+    """Сохраняем хронологически, обрезая только самые старые записи."""
+    save_json(SEEN_FILE, items[-5000:])
+
+
+def load_seen_titles() -> list[str]:
+    if SEEN_TITLES_FILE.exists():
+        data = load_json(SEEN_TITLES_FILE, [])
+        return data if isinstance(data, list) else []
+    # Миграция со старой версии: в seen.json заголовки были перемешаны с ID
+    old = load_json(SEEN_FILE, [])
+    if isinstance(old, list):
+        return [x for x in old if isinstance(x, str) and "http" not in x and " " in x][-2000:]
+    return []
+
+
+def save_seen_titles(items: list[str]) -> None:
+    save_json(SEEN_TITLES_FILE, items[-2000:])
 
 
 def get_chat_id() -> int:
@@ -191,20 +210,35 @@ def extract_media(entry) -> tuple[str | None, str | None]:
     return None, None
 
 
+STOP_WORDS = {
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "at", "by", "from",
+    "is", "are", "was", "were", "be", "its", "his", "her", "their", "that", "this", "as",
+    "в", "и", "на", "с", "по", "для", "от", "до", "за", "из", "к", "у", "о", "об", "а", "но",
+    "что", "как", "это", "его", "ее", "был", "была", "были", "все", "нов", "뉴스",
+}
+
+
+def title_tokens(title: str) -> set[str]:
+    return {w for w in re.findall(r"[a-zа-яё0-9]+", (title or "").lower())
+            if len(w) > 2 and w not in STOP_WORDS}
+
+
 def title_key(title: str) -> str:
-    return " ".join(re.findall(r"[a-zа-яё0-9]+", title.lower()))[:200]
+    return " ".join(sorted(title_tokens(title)))
 
 
-def similar_to_recent(title: str, seen: set[str]) -> bool:
-    key = title_key(title)
-    if not key:
+def similar_to_recent(title: str, recent: list[str]) -> bool:
+    """Jaccard + вхождение: ловит одну и ту же новость с разных лент."""
+    words = title_tokens(title)
+    if len(words) < 3:
         return False
-    words = set(key.split())
-    if len(words) < 4:
-        return False
-    for old in list(seen)[-400:]:
+    for old in recent[-800:]:
         old_words = set(str(old).split())
-        if len(words & old_words) / max(len(words | old_words), 1) >= 0.72:
+        if not old_words:
+            continue
+        inter = len(words & old_words)
+        union = len(words | old_words)
+        if inter / union >= 0.55 or inter / min(len(words), len(old_words)) >= 0.8:
             return True
     return False
 
@@ -252,7 +286,12 @@ async def send_item(bot, chat_id: int, source: str, entry, context=None) -> None
 async def collect_news(bot, chat_id: int, seed_only: bool = False, context=None) -> int:
     s = settings()
     seen = load_seen()
+    seen_set = set(seen)
+    titles = load_seen_titles()
+    new_uids: list[str] = []
+    new_titles: list[str] = []
     sent = 0
+
     for source, url in s["sources"].items():
         try:
             feed = await asyncio.to_thread(feedparser.parse, url)
@@ -263,19 +302,25 @@ async def collect_news(bot, chat_id: int, seed_only: bool = False, context=None)
         fresh = []
         for entry in feed.entries:
             uid = entry.get("id") or entry.get("link")
-            if not uid or uid in seen:
+            if not uid or uid in seen_set:
                 continue
-            seen.add(uid)
+            seen_set.add(uid)
+            new_uids.append(uid)
+
             title = entry.get("title", "")
             keys = s["keywords"]
             if keys and not any(k.lower() in title.lower() for k in keys):
                 continue
             if any(b.lower() in title.lower() for b in s.get("blocked", [])):
                 continue
-            if similar_to_recent(title, seen):
+
+            key = title_key(title)
+            if similar_to_recent(title, titles + new_titles):
                 continue
-            seen.add(title_key(title))
+            if key:
+                new_titles.append(key)
             fresh.append(entry)
+
         if seed_only:
             continue
         for entry in reversed(fresh[:MAX_PER_FEED]):
@@ -283,7 +328,9 @@ async def collect_news(bot, chat_id: int, seed_only: bool = False, context=None)
             sent += 1
             record_stat("sent")
             await asyncio.sleep(1.5)
-    save_seen(seen)
+
+    save_seen(seen + new_uids)
+    save_seen_titles(titles + new_titles)
     if sent:
         save_json(DATA_DIR / "last_check.json", {"at": datetime.now(timezone.utc).isoformat(), "sent": sent})
     return sent
@@ -305,7 +352,7 @@ async def collect_digest(hours: int) -> list[tuple[datetime, str, str, str]]:
     s = settings()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     items: list[tuple[datetime, str, str, str]] = []
-    used: set[str] = set()
+    used: list[str] = []
     for source, url in s["sources"].items():
         try:
             feed = await asyncio.to_thread(feedparser.parse, url)
@@ -322,9 +369,9 @@ async def collect_digest(hours: int) -> list[tuple[datetime, str, str, str]]:
             if any(b.lower() in title.lower() for b in s.get("blocked", [])):
                 continue
             key = title_key(title)
-            if not key or key in used:
+            if not key or similar_to_recent(title, used):
                 continue
-            used.add(key)
+            used.append(key)
             items.append((dt, source, clean(title), entry.get("link", "")))
     items = [(dt, src, await translate_to_ru(title), link) for dt, src, title, link in items]
     items.sort(reverse=True)
