@@ -178,5 +178,86 @@
     "local": false,
     "price": 350,
     "discount": null
+  },
+  {
+    "title": "Xiaomi 19 series might have both flat and curved screens",
+    "summary": "<img align=\"left\" alt=\"\" border=\"0\" height=\"111\" hspace=\"3\" src=\"https://fdn.gsmarena.com/imgroot/news/26/11/xiaomi-19-series-glass-options-rumor/-184x111/gsmarena_000.jpg\" style=\"background: #333333; padding: 0px; margin: 0px 4px 0px 0px; border-style: solid; border-color: #aaaaaa; border-width: 1px;\" width=\"184\" /> <p>Xiaomi took the Xiaomi 18 Pro and 18 Pro Max to global markets earlier this week, and the vanilla Xiaomi 18 is expected to launch in China in December. That hasn't stopped the rumor mill from moving on to the next generation, though. Today, tipster Smart Pikachu took to Weibo to claim that development of the Xiaomi 19 series has kicked off, and that it will include both flat and curved cover glass.\n\nUnfortunately, the tipster didn't say which models will get which screen shape, or how many models the lineup will have. When asked in the comments whether the series will be called the Xiaomi...</p>",
+    "link": "https://www.gsmarena.com/xiaomi_19_series_rumored_to_come_with_both_flat_and_curved_screens-news-75547.php",
+    "date": "2026-11-20T09:06:58.166393+00:00",
+    "local": false,
+    "price": null,
+    "discount": null
+  },
+  {
+    "title": "Amazon Black Friday Week: best tablet deals",
+    "summary": "<img align=\"left\" alt=\"\" border=\"0\" height=\"111\" hspace=\"3\" src=\"https://fdn.gsmarena.com/imgroot/news/26/11/amazon-bf-week-tablets-us/-184x111/gsmarena_000.jpg\" style=\"background: #333333; padding: 0px; margin: 0px 4px 0px 0px; border-style: solid; border-color: #aaaaaa; border-width: 1px;\" width=\"184\" /> <p>This year’s Black Friday deals are already underway for Amazon Prime subscribers and we’re now bringing you some hand-picked tablet deals. As usual with these offers, you’ll need an active Prime membership, and there’s limited stock. The deals will be live until November 30, aka Cyber Monday.\n\nWe kick things off with the Samsung Galaxy Tab S11, which is down to $700 in its 128GB trim and $800 for the 256GB storage trim. It may be over a year old now, but the Tab S11 is a proper flagship Android tablet with an impressive 11-inch Dynamic AMOLED 2X display, a powerful MediaTek 9400+ chip and...</p>",
+    "link": "https://www.gsmarena.com/amazon_black_friday_week_best_tablet_deals-news-75552.php",
+    "date": "2026-11-20T09:06:58.166406+00:00",
+    "local": false,
+    "price": 700,
+    "discount": null
+  },
+  {
+    "title": "Some Pixel 11 shoppers are losing access to their $225 Black Friday discount",
+    "summary": "A $5 Play Pass subscription may not get you that extra Pixel discount.",
+    "link": "https://www.androidauthority.com/google-play-points-pixel-11-black-friday-discount-issues-3737592/",
+    "date": "2026-11-20T10:06:57.374212+00:00",
+    "local": false,
+    "price": 225,
+    "discount": null
+  },
+  {
+    "title": "Google’s Pixel 11 Pro Fold is $250 off for Black Friday",
+    "summary": "Google's newest foldable is 13% off in the big Amazon sale.",
+    "link": "https://www.androidauthority.com/pixel-11-pro-fold-deal-3737404/",
+    "date": "2026-11-20T11:06:57.359555+00:00",
+    "local": false,
+    "price": 250,
+    "discount": 13
+  },
+  {
+    "title": "Lava Smart 4 Pro announced with a 7,000 mAh battery",
+    "summary": "<img align=\"left\" alt=\"\" border=\"0\" height=\"111\" hspace=\"3\" src=\"https://fdn.gsmarena.com/imgroot/news/26/11/lava-smart-4-pro-official/-184x111/gsmarena_001.jpg\" style=\"background: #333333; padding: 0px; margin: 0px 4px 0px 0px; border-style: solid; border-color: #aaaaaa; border-width: 1px;\" width=\"184\" /> <p>Lava unveiled the Smart 4 Plus in June and introduced the Smart 4 in August. Today, the Indian handset maker announced the Lava Smart 4 Pro as the newest member of the Smart series.\n\nThe headline feature of the Lava Smart 4 Pro is its massive 7,000 mAh battery. It supports 18W charging, which is slow for a battery that size, but we won't hold that against Lava since the Smart 4 Pro is a budget smartphone and it's a trade-off customers would have to accept.\n\n\n\nThe Lava Smart 4 Pro is built around a 6.75\" HD+ notched display with a 90Hz refresh rate. It is powered by the Unisoc T610 SoC...</p>",
+    "link": "https://www.gsmarena.com/lava_smart_4_pro_features_price_sale_date-news-75559.php",
+    "date": "2026-11-20T11:06:58.137393+00:00",
+    "local": false,
+    "price": null,
+    "discount": null
+  },
+  {
+    "title": "Samsung Galaxy Buds 4 Pro fall to their lowest price yet",
+    "summary": "Save $70 on Samsung's flagship earbuds, now 28% off on Amazon.",
+    "link": "https://www.androidauthority.com/samsung-galaxy-buds-4-pro-deal-3736302/",
+    "date": "2026-11-20T12:06:57.342795+00:00",
+    "local": false,
+    "price": 70,
+    "discount": 28
+  },
+  {
+    "title": "Samsung Galaxy Watch 8 drops to $199.99 with $100 off",
+    "summary": "Save 3317% on the 40mm Galaxy Watch 8, a comfortable everyday fitness and sleep tracker for Android users.",
+    "link": "https://www.androidauthority.com/samsung-galaxy-watch-8-deal-black-friday-3736300/",
+    "date": "2026-11-20T12:06:57.342798+00:00",
+    "local": false,
+    "price": 19999,
+    "discount": 17
+  },
+  {
+    "title": "Save $150 on the Galaxy Watch 8 Classic this Black Friday",
+    "summary": "Samsung's rotating-bezel smartwatch is 30% off, dropping to $349.99 on Amazon.",
+    "link": "https://www.androidauthority.com/samsung-galaxy-watch-8-classic-deal-black-friday-3736301/",
+    "date": "2026-11-20T12:06:57.342802+00:00",
+    "local": false,
+    "price": 150,
+    "discount": 30
+  },
+  {
+    "title": "Motorola’s Bose-tuned Moto Buds Loop are $100 off on Amazon",
+    "summary": "Motorola's open-ear earbuds with Sound by Bose are 40% off, a new low.",
+    "link": "https://www.androidauthority.com/moto-buds-loop-deal-3737379/",
+    "date": "2026-11-20T12:06:57.342809+00:00",
+    "local": false,
+    "price": 100,
+    "discount": 40
   }
 ]
