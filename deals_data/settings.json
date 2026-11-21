@@ -8,10 +8,9 @@
   "limit": 10,
   "city": "Красноярск",
   "sources": [
-    "https://www.androidauthority.com/feed/",
-    "https://www.gsmarena.com/rss-news-reviews.php3",
     "https://www.dns-shop.ru/?ysclid=mwp6vmgt7n133159082",
     "https://yabs.yandex.ru/count/WwGejI_zOoVX2Ld60xKS09CqoaueD4U1ulR9K-2t4mMEOeC0I3XYIJlH5C24ArRTfIxYQosILP84p0bKyOO9w30wgdRS8T3O73ELnGXuFGAwruCaecr9-OuT3TXEWOp9kbk8Yc46Q4i0eNrWfwdSQG9zFfSxUxRVkVE6Er-_u_M6EzmY8IfHZcbKAeqwRvn7Hb0EAnB-j74xlvrGQJI_drEeKvgZAXIKuyT-EdCe59z6eSvdZXb7EMpGA464P5Mo_YW5_GJz307zoFYnGUF71eqVwe_I24e_rv-a8YCX6LQa8oEb7wIVeQEVeI7gpz5FjOYA1FIZz4DaPFGJbAH4DEB8Q4OIb1qmPHC48cb9cXGeVGE6GJw8XS2WusZ2ottVztthC2aB89zBE9yBQ1826R00RGXa9WLeGo3_5Q0DWUnNW3O4ihW0RGZa9GLeGo3t5Q0D0Uv80TeGuF0Aq8O0PwG0RGXmTmLeGu0hKe0s13YydAy99qoFKddYivmkBVRX9cRHurFRc85KjHg9O5IKb1I2D1f2Kcr3Rnn_Id5REhMVj_JESwTTvyvdT9fByzoUsj2frER1mLxn6mWQ97Kwgq7G6cfzvhKr2eJNLHi8g9xUKsiGzCPtRkvy5BuWaLXqn75PSkCbd9aAT436-Np3PEFDORFxGC0Du00sS4SycN8bxCv9evfMmzvqybUdrR35e0lWPOQ51U1w7JjLKvRfwk6aX0CJmImatfOZKMYuDCssY0K6RBYpeX9kms7uG5eD2G5yXG275y3M0LthVPGwuOEf2M9Q28H7rX0fHk0iR4qqFZ3b0DsrR647JLQXV7C5JC7Sv16ciFKKT9W9vHlEImovgMF1J4nOfnWn7QF3V7_mykBglZHW2DETrYa9NKSmX6lgvMXoSpHt_nivK2J_C5s52-s3SIKx_fUcAdylJLN-N7gFxU--JqlRryPqjNusfgl5D0_0ICSi3y18j-kwhjDcPjiTszHL2oIzVnzmT_JMP_rneRCMVDaBIQDYy-J_rNLsviUq1oVmHgQBybyeNLEYpfIufUorVnACIjsHDyT4CnsKhBZ18vfMqb0gMM0pyvGVGpT83G9yA1Ga_CKRFE-pQGVot3p_cmtg48F31qXj1HH2maq4c7UX35WI37-XVktemjNm16vfCNmaZXM3uhqIewyvhbIN_hAKYKySjZ15y8mwwfZtKQM06yf_RxdnvQqAAfu-i3WPxx9euU3GEwAPC6-J4m00~2?etext=2202.uHeFRbXsBRmIU1SySR5aXWh2aGNkZ2hjcnNteWRucWk.71b715fcbc33a12ecdc4d4f47b71a7cc19b6f14d&from=yandex.ru%3Bsearch%26%23x2F%3Btouch%26%23x2F%3B%3Bweb%3B%3B0%3B&q=mts+shop",
     "https://shop.mts.ru/"
-  ]
+  ],
+  "only_custom": true
 }
