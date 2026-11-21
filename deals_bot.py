@@ -47,6 +47,7 @@ DEFAULT_SETTINGS = {
     "min_discount": 0,
     "sort": "date",          # date | price | discount
     "limit": 10,             # сколько предложений за проверку
+    "only_custom": False,    # True = использовать только источники пользователя
     "city": os.environ.get("DEALS_CITY", "Красноярск"),
     "sources": [
         "https://www.androidauthority.com/feed/",
@@ -81,6 +82,16 @@ def settings() -> dict:
     s = load_json(SETTINGS_FILE, DEFAULT_SETTINGS)
     for key, value in DEFAULT_SETTINGS.items():
         s.setdefault(key, value)
+
+    # Если пользователь добавил свои источники — работаем ТОЛЬКО с ними.
+    defaults = set(DEFAULT_SETTINGS["sources"])
+    custom = [u for u in s.get("sources", []) if u and u not in defaults]
+    if custom and (not s.get("only_custom") or any(u in defaults for u in s.get("sources", []))):
+        s["sources"] = custom
+        s["only_custom"] = True
+        save_json(SETTINGS_FILE, s)
+    if s.get("only_custom"):
+        s["sources"] = [u for u in s.get("sources", []) if u not in defaults]
     return s
 
 
@@ -590,7 +601,7 @@ async def cmd_source(update, context):
         return
     s["sources"].append(url)
     save_json(SETTINGS_FILE, s)
-    await update.message.reply_text("✅ Источник добавлен.")
+    await update.message.reply_text("✅ Источник добавлен. Использую только твои источники.")
 
 
 async def cmd_sources(update, context):
@@ -598,7 +609,8 @@ async def cmd_sources(update, context):
         return
     s = settings()
     text = "\n".join(f"{i}. {u}" for i, u in enumerate(s["sources"], 1)) or "нет"
-    await update.message.reply_text("Источники:\n" + text[:3000])
+    mode = "только мои" if s.get("only_custom") else "включая встроенные"
+    await update.message.reply_text(f"Источники ({mode}):\n" + text[:3000])
 
 
 async def cmd_delsource(update, context):
