@@ -56,8 +56,16 @@ DEFAULT_SETTINGS = {
 }
 
 DEAL_WORDS = re.compile(
-    r"deal|discount|price cut|price drop|off\b|record low|sale|cheap|"
-    r"скидк|дешев|акци|выгодн|снижени", re.I)
+    r"deal|discount|price cut|price drop|off\b|record low|lowest|sale|cheap|"
+    r"скидк|дешев|акци|выгодн|снижени|распродаж", re.I)
+DROP_WORDS = re.compile(
+    r"price drop|drops?\s+(?:to|by|from)|falls?\s+(?:to|by)|slashed|cheaper|"
+    r"reduced|now\s+[$€₽]|down\s+to|new low|all[- ]time low|упал|упала|упали|"
+    r"снизил|снизилась|подешевел|дешевле|стоит теперь", re.I)
+LAUNCH_WORDS = re.compile(
+    r"launch(?:ed|es)?|unveil(?:ed|s)?|announc(?:ed|es)|released|goes official|"
+    r"goes on sale|introduc(?:ed|es)|debut(?:s|ed)?|new (?:phone|smartphone|galaxy|flagship)|"
+    r"анонсир|представлен|выпущен|вышла|презент|новый (?:смартфон|телефон|флагман)", re.I)
 PHONE_WORDS = re.compile(
     r"phone|smartphone|galaxy|pixel|xiaomi|redmi|poco|oneplus|motorola|"
     r"nothing|realme|honor|tecno|android|смартфон|телефон", re.I)
@@ -133,11 +141,24 @@ def extract_discount(text: str) -> int | None:
         return None
 
 
-def is_deal(title: str, summary: str, s: dict) -> bool:
+def deal_kind(text: str) -> str:
+    if LAUNCH_WORDS.search(text):
+        return "🆕 Новый телефон"
+    if DROP_WORDS.search(text) or "record low" in text.lower():
+        return "📉 Цена упала"
+    return "🏷 Акция / скидка"
+
+
+def model_key(title: str) -> str:
+    words = re.findall(r"[a-zа-яё0-9]+", (title or "").lower())
+    return " ".join(words[:3])
+
+
+def is_deal(title: str, summary: str, s: dict, force: bool = False) -> bool:
     text = f"{title} {summary}"
     if not PHONE_WORDS.search(text):
         return False
-    if not DEAL_WORDS.search(text):
+    if not force and not (DEAL_WORDS.search(text) or DROP_WORDS.search(text) or LAUNCH_WORDS.search(text)):
         return False
     if s["brands"] and not any(b.lower() in text.lower() for b in s["brands"]):
         return False
@@ -183,6 +204,13 @@ def parse_source(url: str) -> list[dict]:
 async def collect_deals() -> list[dict]:
     s = settings()
     seen = set(load_json(SEEN_FILE, []))
+    history = load_json(HISTORY_FILE, [])
+    price_history: dict[str, int] = {}
+    for h in history:
+        price = h.get("price")
+        mk = model_key(h.get("title", ""))
+        if price and mk:
+            price_history[mk] = min(price_history.get(mk, price), price)
     found = []
     for url in s["sources"]:
         items = await asyncio.to_thread(parse_source, url)
@@ -191,10 +219,17 @@ async def collect_deals() -> list[dict]:
             if not key or key in seen:
                 continue
             seen.add(key)
-            if not is_deal(item["title"], item["summary"], s):
+            price = extract_price(item["title"] + " " + item["summary"])
+            mk = model_key(item["title"])
+            previous = price_history.get(mk)
+            dropped = bool(price and previous and price <= previous * 0.85)
+            if not is_deal(item["title"], item["summary"], s, force=dropped):
                 continue
             item["local"] = s["city"].lower() in (item["title"] + item["summary"]).lower()
-            item["price"] = extract_price(item["title"] + " " + item["summary"])
+            item["price"] = price
+            item["price_drop_detected"] = dropped
+            item["previous_price"] = previous if dropped else None
+            item["kind_label"] = "📉 Цена упала" if dropped else deal_kind(item["title"] + " " + item["summary"])
             item["discount"] = extract_discount(item["title"] + " " + item["summary"])
             found.append(item)
     save_json(SEEN_FILE, list(seen)[-3000:])
@@ -205,7 +240,6 @@ async def collect_deals() -> list[dict]:
         found.sort(key=lambda x: x.get("discount") or 0, reverse=True)
 
     # История
-    history = load_json(HISTORY_FILE, [])
     known = {h.get("link") or h.get("title") for h in history}
     for item in found:
         key = item.get("link") or item["title"]
@@ -282,7 +316,7 @@ async def cmd_help(update, context):
     await update.message.reply_text(
         "📋 <b>Команды</b>\n\n"
         "/panel — панель настроек\n"
-        "/check — проверить сейчас\n"
+        "/check — проверить сейчас (всегда отвечает)\n"
         "/stats — статистика\n"
         "/history — найденные предложения\n"
         "/favorites — избранное · /unsave N\n"
@@ -297,7 +331,9 @@ async def cmd_help(update, context):
         "/top — лучшие предложения по скидке\n"
         "/brands Samsung,Xiaomi · /brands all\n"
         "/source URL · /sources · /delsource N · /testsource URL\n"
-        "/on /off — включить/выключить проверку",
+        "/on /off — включить/выключить проверку\n\n"
+        "Приходит: акции, падение цены (в т.ч. не в рамках акции) и новые модели. "
+        "Если предложений нет — бот молчит.",
         parse_mode="HTML")
 
 
@@ -307,12 +343,16 @@ async def format_deal(item: dict) -> str:
     parts = []
     if item.get("alert_model"):
         parts.append(f'🔔 <b>АЛЕРТ: {html.escape(item["alert_model"])}</b>')
+    parts.append(f'<b>{html.escape(item.get("kind_label", "🏷 Предложение"))}</b>')
     if item.get("local"):
         parts.append("📍 Красноярск")
     parts.append(f"📱 <b>{title}</b>")
     details = []
     if item.get("price"):
-        details.append(f"💰 ~{item['price']} ₽")
+        price_text = f"💰 ~{item['price']} ₽"
+        if item.get("previous_price"):
+            price_text += f" (было ~{item['previous_price']} ₽)"
+        details.append(price_text)
     if item.get("discount"):
         details.append(f"📉 −{item['discount']}%")
     if details:
@@ -322,9 +362,10 @@ async def format_deal(item: dict) -> str:
     return "\n".join(parts)
 
 
-async def send_deals(context, chat_id: int, deals: list[dict]):
+async def send_deals(context, chat_id: int, deals: list[dict], notify_empty: bool = False):
     if not deals:
-        await context.bot.send_message(chat_id, "Пока выгодных предложений не нашёл.")
+        if notify_empty:
+            await context.bot.send_message(chat_id, "Пока выгодных предложений не нашёл.")
         return
     for item in deals:
         text = await format_deal(item)
@@ -340,17 +381,17 @@ async def send_deals(context, chat_id: int, deals: list[dict]):
         await asyncio.sleep(0.5)
 
 
-async def do_check(context, chat_id: int):
+async def do_check(context, chat_id: int, notify_empty: bool = False):
     deals = await collect_deals()
     bump_stat("checks")
-    await send_deals(context, chat_id, deals)
+    await send_deals(context, chat_id, deals, notify_empty=notify_empty)
 
 
 async def cmd_check(update, context):
     if not is_owner(update):
         return
     await update.message.reply_text("Ищу выгодные предложения…")
-    await do_check(context, update.effective_chat.id)
+    await do_check(context, update.effective_chat.id, notify_empty=True)
 
 
 async def cmd_stats(update, context):
